@@ -1,42 +1,28 @@
+import slick.jdbc.PostgresProfile.api._
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 
-import java.time.DayOfWeek
-
-object CustomProfile extends CustomProfile
-
-trait CustomProfile extends  slick.jdbc.PostgresProfile {
-  import java.sql.{ResultSet, PreparedStatement}
-  override val columnTypes = new JdbcTypes
-
-  class JdbcTypes extends super.JdbcTypes {
-
-    class DayOfWeekJdbcType extends DriverJdbcType[DayOfWeek] {
-      def sqlType = java.sql.Types.OTHER
-      def setValue(v: DayOfWeek, p: PreparedStatement, idx: Int) = p.setObject(idx, v, sqlType)
-      def getValue(r: ResultSet, idx: Int) = DayOfWeek.valueOf(r.getString(idx))
-      def updateValue(v: DayOfWeek, r: ResultSet, idx: Int) = r.updateObject(idx, v)
-    }
-
-    val dowCol = new DayOfWeekJdbcType()
-  }
-
-  override val api = CustomAPI
-
-  object CustomAPI extends API {
-    implicit def dowColumnType: BaseColumnType[DayOfWeek] = columnTypes.dowCol
-  }
-}
-
 object Example {
 
-  import CustomProfile.api._
-
+  import java.time.DayOfWeek
   case class Shift(day: DayOfWeek, duration: Int)
 
+  implicit val dowMapper = MappedColumnType.base[DayOfWeek, String](
+    day => day.toString.take(3).toLowerCase, // MONDAY -> mon etc
+    str => str match {
+      case "mon" => DayOfWeek.MONDAY
+      case "tue" => DayOfWeek.TUESDAY
+      case "wed" => DayOfWeek.WEDNESDAY
+      case "thu" => DayOfWeek.THURSDAY
+      case "fri" => DayOfWeek.FRIDAY
+      case "sat" => DayOfWeek.SATURDAY
+      case "sun" => DayOfWeek.SUNDAY
+    }
+  )
+
   class ShiftTable(tag: Tag) extends Table[Shift](tag, "shifts") {
-    def day = column[DayOfWeek]("day", O.SqlType("WeekDay"))
+    def day = column[DayOfWeek]("day", O.SqlType("weekday"))
     def duration = column[Int]("duration")
     def * = (day, duration).mapTo[Shift]
   }
@@ -46,8 +32,9 @@ object Example {
   def main(args: Array[String]): Unit = {
 
     def schema = DBIO.seq(
-      sqlu" create type WeekDay as ENUM('SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY') ",
+      sqlu" create type WeekDay as ENUM('sun','mon','tue','wed','thu','fri','sat') ",
       sqlu" create table shifts( duration INTEGER, day WeekDay ) ",
+      sqlu" CREATE CAST (character varying AS WeekDay) WITH INOUT AS ASSIGNMENT ",
     )
 
     val program = for {
@@ -55,7 +42,7 @@ object Example {
       _ <- shifts.delete
       _ <- shifts += Shift(DayOfWeek.MONDAY, 1)
       _ <- shifts += Shift(DayOfWeek.TUESDAY, 2)
-      _ <- shifts.filter(_.day === DayOfWeek.TUESDAY).update(Shift(DayOfWeek.SATURDAY, 3))
+      _ <- shifts.filter(_.day === DayOfWeek.TUESDAY).update(Shift(DayOfWeek.WEDNESDAY, 3))
       rows <- shifts.result
     } yield rows
 
